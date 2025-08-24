@@ -1,7 +1,6 @@
-# fly.toml app configuration file generated for fb-ai-bot on 2025-08-22T22:56:41+08:00
+# fly.toml app configuration file generated for fb-ai-bot
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
 
 app = 'fb-ai-bot'
 primary_region = 'arn'
@@ -22,5 +21,8 @@ primary_region = 'arn'
   cpus = 1
 
 [mounts]
-  source="data"
-  destination="/data"
+  source = "data"
+  destination = "/data"
+
+[env]
+  DATABASE_URL = "postgresql://<user>:<password>@<host>:5432/<database>?schema=public"
