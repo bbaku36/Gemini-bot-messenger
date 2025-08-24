@@ -34,14 +34,13 @@ export class MessengerService {
       }
 
       // 2. Хэрэглэгчийн ирүүлсэн текстийг DB-д хадгалах
-      await prisma.order.create({
+      await prisma.message.create({
         data: {
           userId: user.id,
-          message: message,   // ✨ энд хадгалж байна
-          status: 'pending',
+          text: message,
         },
       });
-      this.logger.log(`Order created for user: ${senderId}`);
+      this.logger.log(`Message stored for user: ${senderId}`);
 
       // 3. AI-аас хариу авах (DB дотор хадгалсан текстээс)
       const aiResponse = await this.aiService.generateResponse(message);
