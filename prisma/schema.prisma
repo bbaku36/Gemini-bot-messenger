@@ -1,0 +1,39 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id          String   @id @default(cuid()) // 1. ID
+  name        String // 3. Нэр
+  price       Int // 2. Үнэ (₮-өөр, ж: 9900)
+  description String? // 4. Танилцуулга
+  instruction String? // 5. Заавар
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/**
+ * Чиний одоо байгаа загварыг дахин ашиглая
+ */
+model User {
+  id   String  @id @default(cuid())
+  name String?
+}
+
+model Order {
+  id        String   @id @default(cuid())
+  userId    String
+  message   String? // өмнө nullable болгосон
+  status    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
