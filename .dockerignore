@@ -1,0 +1,21 @@
+node_modules
+npm-debug.log
+
+# VCS
+.git
+.gitignore
+
+# Env and local DB
+.env
+*.db
+prisma/dev.db
+
+# Tests and coverage
+test
+coverage
+
+# OS junk
+.DS_Store
+
+# Build outputs (built in container)
+dist

@@ -10,42 +10,35 @@ const prisma = new PrismaClient();
 export class MessengerService {
   private readonly logger = new Logger(MessengerService.name);
   private readonly pageAccessToken: string;
+  private readonly sendEnabled: boolean;
 
   constructor(
     private configService: ConfigService,
     private aiService: AiService,
   ) {
-    this.pageAccessToken = this.configService.get<string>(
-      'FACEBOOK_PAGE_ACCESS_TOKEN',
-    );
+    this.pageAccessToken = this.configService.get<string>('FACEBOOK_PAGE_ACCESS_TOKEN');
+    const sendFlag = this.configService.get<string>('FACEBOOK_SEND_ENABLED');
+    this.sendEnabled = sendFlag ? sendFlag.toLowerCase() === 'true' : true;
   }
 
   async handleMessage(senderId: string, message: string): Promise<void> {
     try {
       this.logger.log(`Incoming message from ${senderId}: ${message}`);
 
-      // 1. Хэрэглэгчийг DB-д шалгаад үүсгэх
+      // Ensure user exists
       let user = await prisma.user.findUnique({ where: { id: senderId } });
       if (!user) {
-        user = await prisma.user.create({
-          data: { id: senderId, name: null },
-        });
+        user = await prisma.user.create({ data: { id: senderId, name: null } });
         this.logger.log(`New user created: ${senderId}`);
       }
 
-      // 2. Хэрэглэгчийн ирүүлсэн текстийг DB-д хадгалах
-      await prisma.message.create({
-        data: {
-          userId: user.id,
-          text: message,
-        },
-      });
-      this.logger.log(`Message stored for user: ${senderId}`);
+      // Store message
+      await prisma.message.create({ data: { userId: user.id, text: message } });
 
-      // 3. AI-аас хариу авах (DB дотор хадгалсан текстээс)
+      // Get AI response
       const aiResponse = await this.aiService.generateResponse(message);
 
-      // 4. Messenger рүү буцааж илгээх
+      // Send back to Messenger
       await this.sendMessage(senderId, aiResponse);
     } catch (error: any) {
       this.logger.error(`Error handling message: ${error.message}`);
@@ -53,26 +46,23 @@ export class MessengerService {
     }
   }
 
-  private async sendMessage(
-    recipientId: string,
-    message: string,
-  ): Promise<void> {
-    const url = `https://graph.facebook.com/v21.0/me/messages`;
+  private async sendMessage(recipientId: string, message: string): Promise<void> {
+    if (!this.sendEnabled) {
+      this.logger.log(`Facebook send disabled. Would send to ${recipientId}: ${message}`);
+      return;
+    }
 
+    const url = `https://graph.facebook.com/v21.0/me/messages`;
     try {
       await axios.post(
         url,
-        {
-          recipient: { id: recipientId },
-          message: { text: message },
-        },
-        {
-          params: { access_token: this.pageAccessToken },
-        },
+        { recipient: { id: recipientId }, message: { text: message } },
+        { params: { access_token: this.pageAccessToken } },
       );
       this.logger.log(`Message sent to ${recipientId}: ${message}`);
     } catch (error: any) {
-      this.logger.error(`Error sending message: ${error.message}`);
+      const details = error?.response?.data || error?.toString?.();
+      this.logger.error(`Error sending message: ${error.message} ${details ? `- ${JSON.stringify(details)}` : ''}`);
       throw error;
     }
   }

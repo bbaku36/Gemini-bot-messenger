@@ -30,13 +30,22 @@ COPY . .
 # Build application
 RUN npm run build
 
+# Generate Prisma client after schema is present
+RUN npx prisma generate
+
 
 # Final stage for app image
 FROM base
+
+# Install OpenSSL for Prisma runtime
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y openssl && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy built application
 COPY --from=build /app /app
 
 # Start the server by default, this can be overwritten at runtime
 EXPOSE 3000
+# Apply migrations on start, then run production build
 CMD ["sh", "-c", "npx prisma migrate deploy && npm run start:prod"]

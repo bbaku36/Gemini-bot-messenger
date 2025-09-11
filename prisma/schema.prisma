@@ -1,9 +1,8 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Prisma schema for SQLite storage
+// Datasource uses DATABASE_URL; default is local dev.db, Fly uses /data/dev.db
 
 generator client {
   provider = "prisma-client-js"
-
 }
 
 datasource db {
@@ -12,18 +11,18 @@ datasource db {
 }
 
 model Product {
-  id          String   @id @default(cuid()) // 1. ID
-  name        String // 3. Нэр
-  price       Int // 2. Үнэ (₮-өөр, ж: 9900)
-  description String? // 4. Танилцуулга
-  instruction String? // 5. Заавар
+  id          String   @id @default(cuid())
+  name        String
+  price       Int
+  description String?
+  instruction String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
 model User {
-  id   String  @id @default(cuid())
-  name String?
+  id       String    @id @default(cuid())
+  name     String?
   messages Message[]
 }
 
