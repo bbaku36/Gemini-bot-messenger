@@ -74,15 +74,8 @@ export class MessengerService {
         if (order.status === 'ready') await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
       }
 
-      // If it's a plain greeting, respond deterministically
-      const normalized = (message || '').trim().toLowerCase();
-      let aiResponse: string;
-      if (/^(сайн|сайн байна уу)[!.?\s]*$/.test(normalized)) {
-        aiResponse = 'Сайн байна уу, та ямар бараа сонирхож байна?';
-      } else {
-        // Otherwise ask AI for a response (it will prompt for missing info)
-        aiResponse = await this.aiService.generateResponse(message);
-      }
+      // Ask AI for a response (free but product-focused)
+      const aiResponse = await this.aiService.generateResponse(message);
 
       // Send back to Messenger
       await this.sendMessage(senderId, aiResponse);

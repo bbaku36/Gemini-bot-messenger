@@ -57,16 +57,65 @@ export class AiService {
       .join('\n\n');
   }
 
+  private extractKeywords(text: string): string[] {
+    if (!text) return [];
+    const lowered = text
+      .toLowerCase()
+      .replace(/[\p{P}\p{S}]/gu, ' ') // remove punctuation/symbols
+      .replace(/\s+/g, ' ')
+      .trim();
+    const stop = new Set([
+      'сайн', 'байна', 'уу', 'юу', 'вэ', 'та', 'танайд', 'танай', 'хэн', 'ямар', 'яаж', 'хэн', 'энэ', 'тэр', 'би', 'тави', 'бол', 'болов', 'болох', 'хан', 'мэдээ', 'хэрэгтэй', 'сонирхож', 'асууя', 'арта', 'гээд', 'гэхэд', 'гэж', 'л', 'ч', 'бас', 'ба', 'энд', 'тэгвэл', 'хариу', 'утга', 'ах', 'огоо', 'байгаа', 'байх', 'одоогоор', 'чинас', 'ни', 'миний', 'манай', 'бэлэн',
+    ]);
+    return lowered
+      .split(' ')
+      .map((t) => t.trim())
+      .filter((t) => t && t.length >= 2 && !stop.has(t))
+      .slice(0, 5);
+  }
+
   async generateResponse(userMessage: string): Promise<string> {
     try {
-      const products = await prisma.product.findMany({ orderBy: { createdAt: 'asc' } });
-      const productList = this.formatProductsList(products);
+      const allProducts = await prisma.product.findMany({ orderBy: { createdAt: 'asc' } });
+      if (!allProducts.length) {
+        return 'Одоогоор манайд бүтээгдэхүүн байхгүй байна.';
+      }
+
+      const keywords = this.extractKeywords(userMessage);
+      let matched = allProducts;
+      if (keywords.length) {
+        matched = await prisma.product.findMany({
+          where: {
+            OR: keywords.map((k) => ({
+              OR: [
+                { name: { contains: k, mode: 'insensitive' } },
+                { description: { contains: k, mode: 'insensitive' } },
+                { instruction: { contains: k, mode: 'insensitive' } },
+              ],
+            })),
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+      }
+
+      const matchedList = this.formatProductsList(matched);
+      const allList = this.formatProductsList(allProducts);
+
+      const scope = `Зөвхөн дараах каталогийн талаар ярь. Хэрэв хэрэглэгчийн хүссэн бараа тохирохгүй бол \"одоогоор байхгүй\" гэж хэлээд каталогоос ойролцоо/хамааралтайг санал болго. Каталог:
+---
+${allList}
+---`;
+
+      const guidance = `Хариултаа энгийн, найрсаг, товч өг. Бусад сэдвээр зөвлөмж бүү өг. Хэрэв хэрэглэгч захиалахад бэлэн бол утасны дугаар, хүргэх хаягийг хамтад нь асуу. Хэрэв нэгийг нь өгвөл үлдсэнийг нь л асуу.`;
+
+      // If keywords provided and nothing matched, handle directly without LLM
+      if (keywords.length && matched.length === 0) {
+        return `Таны хайсан бараа одоогоор байхгүй байна. Манайд бэлэн байгаа бүтээгдэхүүнүүд:\n\n${allList}`;
+      }
 
       const response = await this.chatModel.invoke([
-        new SystemMessage(
-          `Та Facebook мессежүүдэд хариулах туслах. Дүрэм:\n- Хэрэглэгч зөвхөн мэндэлбэл яг ингэж хариул: \"Сайн байна уу, та ямар бараа сонирхож байна?\"\n- Хэрэглэгч бүтээгдэхүүн сонирхвол доорх жагсаалтаас НЭР + ҮНЭ + товч тайлбараар 1., 2., ... гэж дүрэмт жагсаа.\n- Хэрэглэгч захиалах сонирхол илэрхийлбэл ЭХЛЭЭД утасны дугаар, хүргэх хаяг ХОЁРЫГ цул асуултаар хүс: \"Захиалгаа баталгаажуулахын тулд утасны дугаар, хүргэх хаягаа үлдээгээрэй.\"\n- Хэрэв зөвхөн нэгийг өгвөл үлдсэнийг нь л товч асуу.\n- Хоёуланг нь өгсөн бол: \"Захиалга баталгаажлаа таны захиалга маргааш хүргэгдэх болно Баялалаа\" гэж хариул.\n\nБэлэн бүтээгдэхүүний жагсаалт:\n${productList}`,
-        ),
-        new HumanMessage(userMessage),
+        new SystemMessage(`${scope}\n\n${guidance}`),
+        new HumanMessage(`Хэрэглэгчийн асуулт: ${userMessage}\n\nХамаатай бүтээгдэхүүний жагсаалт:\n${matchedList}`),
       ]);
 
       return response.content.toString();
