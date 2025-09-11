@@ -24,6 +24,7 @@ model User {
   id       String    @id @default(cuid())
   name     String?
   messages Message[]
+  orders   Order[]
 }
 
 model Message {
@@ -33,4 +34,15 @@ model Message {
   createdAt DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id])
+}
+
+model Order {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message      String
+  status       String
+  contactPhone String?
+  address      String?
+  createdAt    DateTime @default(now())
 }
