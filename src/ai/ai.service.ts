@@ -76,15 +76,30 @@ export class AiService {
 
   async generateResponse(userMessage: string): Promise<string> {
     try {
-      const allProducts = await prisma.product.findMany({ orderBy: { createdAt: 'asc' } });
-      if (!allProducts.length) {
+      const allAvailable = await prisma.product.findMany({ where: { inStock: true }, orderBy: { createdAt: 'asc' } });
+      if (!allAvailable.length) {
         return 'Одоогоор манайд бүтээгдэхүүн байхгүй байна.';
       }
 
       const keywords = this.extractKeywords(userMessage);
-      let matched = allProducts;
+      let matched = allAvailable;
+      let matchedAny: typeof matched | null = null;
       if (keywords.length) {
         matched = await prisma.product.findMany({
+          where: {
+            inStock: true,
+            OR: keywords.map((k) => ({
+              OR: [
+                { name: { contains: k, mode: 'insensitive' } },
+                { description: { contains: k, mode: 'insensitive' } },
+                { instruction: { contains: k, mode: 'insensitive' } },
+              ],
+            })),
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        // Also check if there are matches but currently out of stock
+        matchedAny = await prisma.product.findMany({
           where: {
             OR: keywords.map((k) => ({
               OR: [
@@ -99,7 +114,7 @@ export class AiService {
       }
 
       const matchedList = this.formatProductsList(matched);
-      const allList = this.formatProductsList(allProducts);
+      const allList = this.formatProductsList(allAvailable);
 
       const scope = `Зөвхөн дараах каталогийн талаар ярь. Хэрэв хэрэглэгчийн хүссэн бараа тохирохгүй бол \"одоогоор байхгүй\" гэж хэлээд каталогоос ойролцоо/хамааралтайг санал болго. Каталог:
 ---
@@ -110,7 +125,10 @@ ${allList}
 
       // If keywords provided and nothing matched, handle directly without LLM
       if (keywords.length && matched.length === 0) {
-        return `Таны хайсан бараа одоогоор байхгүй байна. Манайд бэлэн байгаа бүтээгдэхүүнүүд:\n\n${allList}`;
+        if (matchedAny && matchedAny.length > 0) {
+          return `Таны хайсан бараа одоогоор бэлэнгүй байна. Манайд одоо бэлэн байгаа дараах бүтээгдэхүүнүүдээс сонирхоорой:\n\n${allList}`;
+        }
+        return `Таны хайсан бараа манайд алга байна. Одоогоор бэлэн байгаа бүтээгдэхүүнүүд:\n\n${allList}`;
       }
 
       const response = await this.chatModel.invoke([

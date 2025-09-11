@@ -16,6 +16,7 @@ model Product {
   price       Int
   description String?
   instruction String?
+  inStock     Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
