@@ -71,6 +71,43 @@ $ mau deploy
 
 With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
 
+### Deploy to Vercel (Docker)
+
+This project includes a `Dockerfile`, so deploying to Vercel is straightforward:
+
+1. Push this repo to GitHub/GitLab/Bitbucket.
+2. Create a new Vercel Project and import the repo. Vercel will auto-detect the `Dockerfile`.
+3. Set the environment variables in Vercel Project Settings → Environment Variables:
+   - `GOOGLE_API_KEY`
+   - `FACEBOOK_PAGE_ACCESS_TOKEN`
+   - `FACEBOOK_VERIFY_TOKEN`
+   - `FACEBOOK_APP_SECRET`
+   - `DATABASE_URL` (for SQLite use `file:./dev.db` or use an external DB for persistence)
+4. Deploy. The app listens on `0.0.0.0:$PORT` and exposes port `3000` in Docker.
+
+Notes:
+- SQLite in a container is ephemeral on Vercel. For persistence, switch `DATABASE_URL` to a managed database (e.g., Neon/Postgres, Turso/SQLite, etc.).
+- Facebook webhook verification and messages use `GET /webhook` and `POST /webhook` respectively.
+
+### Switch to Postgres
+
+1) Update Prisma datasource (done in repo):
+- `prisma/schema.prisma` uses `provider = "postgresql"`.
+
+2) Create a Postgres database:
+- Neon, Supabase, Railway, etc. Copy the connection string.
+
+3) Set `DATABASE_URL`:
+- Locally: copy `.env.example` to `.env` and fill `DATABASE_URL`.
+- Vercel: Project Settings → Environment Variables → add `DATABASE_URL`.
+
+4) Create and apply migrations locally:
+- `npm run migrate:dev -- --name init`
+- Commit the generated `prisma/migrations` directory.
+
+5) Deploy:
+- Vercel will build the Docker image and run `prisma migrate deploy` on start.
+
 ## Resources
 
 Check out a few resources that may come in handy when working with NestJS:
@@ -100,3 +137,4 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 # Ai-bot-bacebook
 # Ai-bot-bacebook
 # Gemini-bot-messenger
+# Gemini
