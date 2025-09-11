@@ -7,3 +7,4 @@ node_modules
 *.db
 prisma/dev.db
 .DS_Store
+dist
