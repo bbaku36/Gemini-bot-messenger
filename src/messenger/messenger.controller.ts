@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Query, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Logger,
+  Res,
+  HttpStatus,
+} from '@nestjs/common';
+import { Response } from 'express';
 import { MessengerService } from './messenger.service';
 import { ConfigService } from '@nestjs/config';
 
@@ -16,17 +26,21 @@ export class MessengerController {
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
-  ): string {
+    @Res() res: Response,
+  ) {
     const verifyToken = this.configService.get<string>('FACEBOOK_VERIFY_TOKEN');
 
     if (mode === 'subscribe' && token === verifyToken) {
-      return challenge;
+      this.logger.log('Webhook verified successfully!');
+      return res.status(HttpStatus.OK).send(challenge); // ✅ зөв: raw challenge text буцаана
     }
-    throw new Error('Invalid verification token');
+
+    this.logger.warn('Invalid verification token received!');
+    return res.sendStatus(HttpStatus.FORBIDDEN);
   }
 
   @Post()
-  async handleWebhook(@Body() body: any): Promise<void> {
+  async handleWebhook(@Body() body: any, @Res() res: Response) {
     if (body.object === 'page') {
       for (const entry of body.entry) {
         for (const event of entry.messaging) {
@@ -38,6 +52,9 @@ export class MessengerController {
           }
         }
       }
+      return res.status(HttpStatus.OK).send('EVENT_RECEIVED');
     }
+
+    return res.sendStatus(HttpStatus.NOT_FOUND);
   }
 }
