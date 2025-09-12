@@ -11,6 +11,10 @@ export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly chatModel: ChatGoogleGenerativeAI;
   private trgmAvailable?: boolean;
+  private readonly MAX_HISTORY = 6;
+  private readonly MAX_MATCHED = 6;
+  private readonly MAX_SUGGEST = 3;
+  private readonly MAX_DESC_CHARS = 110;
 
   constructor(private configService: ConfigService) {
     this.chatModel = new ChatGoogleGenerativeAI({
@@ -46,15 +50,21 @@ export class AiService {
       description?: string | null;
       instruction?: string | null;
     }>,
+    limit = this.MAX_MATCHED,
   ): string {
-    if (!products.length) return 'Одоогоор бүтээгдэхүүний жагсаалт хоосон байна.';
-    return products
-      .map(
-        (p, i) =>
-          `${i + 1}. ${p.name}\n- Үнэ: ${p.price}₮` +
-          `${p.description ? `\n- ${p.description}` : ''}` +
-          `${p.instruction ? `\n- Заавар: ${p.instruction}` : ''}`,
-      )
+    if (!products.length) return '';
+    const take = products.slice(0, limit);
+    const trim = (s?: string | null) =>
+      s && s.length > this.MAX_DESC_CHARS ? `${s.slice(0, this.MAX_DESC_CHARS - 1)}…` : s || '';
+    return take
+      .map((p, i) => {
+        const lines = [`${i + 1}. ${p.name}`, `- Үнэ: ${p.price}₮`];
+        const d = trim(p.description);
+        if (d) lines.push(`- ${d}`);
+        const ins = trim(p.instruction);
+        if (ins) lines.push(`- Заавар: ${ins}`);
+        return lines.join('\n');
+      })
       .join('\n\n');
   }
 
@@ -161,40 +171,40 @@ export class AiService {
         }
       }
 
-      const matchedList = this.formatProductsList(matched);
-      const allList = this.formatProductsList(allAvailable);
+      const matchedList = this.formatProductsList(matched, this.MAX_MATCHED);
+      const allList = matched.length ? '' : this.formatProductsList(allAvailable, this.MAX_SUGGEST);
       const scope = `Та Tutuyu online дэлгүүрийн туслах. Богино, ойлгомжтой, эелдэг хариул. Бүтээгдэхүүний талаарх хамгийн хамаатай мэдээллийг л өг; тохирохгүй бол байхгүйг хэл; тухайн хүн захиалга үүсгэх бол заавал утасны дугаар болон гэрийн хаягийн мэдээллийг ав аль нэг нь дутуу бол лавлаж асууж байгаад ав. мөн захиалгын мэдээлэл бүрэг ирсэн бол дансны дугаараа явуул;Tutuyu online дэлгүүр
 ,хот дотор захиалга хйиж байгаа тохиолдолд бараагаа хүлээж авсны дараа доорх дансаар төлбөрөө хийнэ үү хүргэлт үнэгүй хөдөө орон нутаг руу унаанд тавьж явуулдаг тул хаягын дэлгэрэнгүй мэдээлэл хэрэггүй бас зүгээр данс явуулаад л болоо ,
 Данс:5031746069 Бат-Итгэл (Хаанбанк)
 IBAN: MN660005005031746069
 Гүйлгээний утга:утасны дугаар`;
 
-      const guidance = `Хариултаа товч, ойлгомжтой, найрсаг өг. Tutuyu online дэлгүүр
-,хот дотор захиалга хйиж байгаа тохиолдолд бараагаа хүлээж авсны дараа доорх дансаар төлбөрөө хийнэ үү хөдөө орон нутаг руу унаанд тавьж явуулдаг тул хаягын дэлгэрэнгүй мэдээлэл хэрэггүй бас зүгээр данс явуулаад л болоо ,
-Данс:5031746069 Бат-Итгэл (Хаанбанк)
-IBAN: MN660005005031746069
-Гүйлгээний утга:утасны дугаар
-` ;
+      const guidance = `Хариултаа товч, ойлгомжтой, найрсаг өг.` ;
 
       // Хатуу буцаалт хийхгүй; AI өөрөө найрсаг, товч хариулт бүрдүүлнэ
 
       // Load last few messages for lightweight memory
       const history = await prisma.message.findMany({
         where: { userId },
-        orderBy: { createdAt: 'asc' },
-        take: 12,
+        orderBy: { createdAt: 'desc' },
+        take: this.MAX_HISTORY * 2,
       });
+      history.reverse();
 
       const chat: (SystemMessage | HumanMessage | AIMessage)[] = [
         new SystemMessage(`${scope}\n\n${guidance}`),
       ];
+      const trimMsg = (s: string) => (s.length > 300 ? `${s.slice(0, 299)}…` : s);
       for (const m of history) {
-        if ((m as any).role === 'bot') chat.push(new AIMessage(m.text));
-        else chat.push(new HumanMessage(m.text));
+        const t = trimMsg(m.text);
+        if ((m as any).role === 'bot') chat.push(new AIMessage(t));
+        else chat.push(new HumanMessage(t));
       }
       chat.push(
         new HumanMessage(
-          `Асуулт: ${userMessage}\n\nТаарч буй бараа (бэлэн):\n${matchedList}\n\nБусад бэлэн бараа (санал болгоход):\n${allList}`,
+          `Асуулт: ${userMessage}` +
+          (matchedList ? `\n\nТаарч буй бараа:\n${matchedList}` : '') +
+          (allList ? `\n\nСанал болгох:\n${allList}` : ''),
         ),
       );
 
