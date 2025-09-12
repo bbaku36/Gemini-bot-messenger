@@ -156,6 +156,19 @@ export class AiService {
     return table[t] ?? [];
   }
 
+  private async hasPgTrgm(): Promise<boolean> {
+    if (this.trgmAvailable !== undefined) return this.trgmAvailable;
+    try {
+      const rows = await prisma.$queryRaw<Array<{ extname: string }>>(
+        Prisma.sql`SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'`
+      );
+      this.trgmAvailable = rows.length > 0;
+    } catch {
+      this.trgmAvailable = false;
+    }
+    return this.trgmAvailable;
+  }
+
   async generateResponse(userMessage: string): Promise<string> {
     try {
       const allAvailable = await prisma.product.findMany({ where: { inStock: true }, orderBy: { createdAt: 'asc' } });
@@ -204,48 +217,32 @@ export class AiService {
             matchedAny = rowsAny as any;
           }
         } else {
-          // Fallback: ILIKE contains search
-          const inWhere = {
-            inStock: true,
-            OR: keywords.map((k) => ({
-              OR: [
-                { name: { contains: k, mode: 'insensitive' } },
-                { description: { contains: k, mode: 'insensitive' } },
-                { instruction: { contains: k, mode: 'insensitive' } },
-              ],
-            })),
-          } as const;
-          matched = await prisma.product.findMany({ where: inWhere, orderBy: { createdAt: 'asc' } });
+          // Fallback: ILIKE contains search (build flat OR list)
+          const orIn = keywords.flatMap((k) => [
+            { name: { contains: k, mode: 'insensitive' as const } },
+            { description: { contains: k, mode: 'insensitive' as const } },
+            { instruction: { contains: k, mode: 'insensitive' as const } },
+          ]);
+          matched = await prisma.product.findMany({
+            where: { inStock: true, OR: orIn },
+            orderBy: { createdAt: 'asc' },
+          });
 
-          const anyWhere = {
-            OR: keywords.map((k) => ({
-              OR: [
-                { name: { contains: k, mode: 'insensitive' } },
-                { description: { contains: k, mode: 'insensitive' } },
-                { instruction: { contains: k, mode: 'insensitive' } },
-              ],
-            })),
-          } as const;
-          matchedAny = await prisma.product.findMany({ where: anyWhere, orderBy: { createdAt: 'asc' } });
+          const orAny = keywords.flatMap((k) => [
+            { name: { contains: k, mode: 'insensitive' as const } },
+            { description: { contains: k, mode: 'insensitive' as const } },
+            { instruction: { contains: k, mode: 'insensitive' as const } },
+          ]);
+          matchedAny = await prisma.product.findMany({
+            where: { OR: orAny },
+            orderBy: { createdAt: 'asc' },
+          });
         }
       }
 
       const matchedList = this.formatProductsList(matched);
       const allList = this.formatProductsList(allAvailable);
-
-      const scope = `Зөвхөн дараах каталогийн талаар ярь. Хэрэв хэрэглэгчийн хүссэн бараа тохирохгүй бол \"одоогоор байхгүй\" гэж хэлээд каталогоос ойролцоо/хамааралтайг санал болго. Хэрэглэх заавар асуувал тухайн барааны 'Заавар' талбараас ишлэн товч тайлбарла. Төлбөр/дэлгүүрийн мэдээлэл асуувал: Tutuyu online дэлгүүр; Данс: 5031746069 Бат‑Итгэл (Хаанбанк); IBAN: MN660005005031746069; Төлбөр — УБ дотор бараагаа хүлээн авсны дараа, орон нутаг руу болохоор урьдчилан төлнө. Каталог:
-  private async hasPgTrgm(): Promise<boolean> {
-    if (this.trgmAvailable !== undefined) return this.trgmAvailable;
-    try {
-      const rows = await prisma.$queryRaw<Array<{ extname: string }>>(
-        Prisma.sql`SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'`
-      );
-      this.trgmAvailable = rows.length > 0;
-    } catch {
-      this.trgmAvailable = false;
-    }
-    return this.trgmAvailable;
-  }
+      const scope = `Зөвхөн дараах каталогийн талаар ярь. Хэрэв хэрэглэгчийн хүссэн бараа тохирохгүй бол "одоогоор байхгүй" гэж хэлээд каталогоос ойролцоо/хамааралтайг санал болго. Хэрэглэх заавар асуувал тухайн барааны 'Заавар' талбараас ишлэн товч тайлбарла. Төлбөр/дэлгүүрийн мэдээлэл асуувал: Tutuyu online дэлгүүр; Данс: 5031746069 Бат‑Итгэл (Хаанбанк); IBAN: MN660005005031746069; Төлбөр — УБ дотор бараагаа хүлээн авсны дараа, орон нутаг руу болохоор урьдчилан төлнө. Каталог:
 ---
 ${allList}
 ---`;
