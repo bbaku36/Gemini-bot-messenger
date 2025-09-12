@@ -171,7 +171,7 @@ export class AiService {
           Prisma.sql`(p."name" % ${k} OR p."description" % ${k} OR p."instruction" % ${k})`,
         );
         if (orClausesIn.length) {
-          const whereIn = Prisma.join(orClausesIn, Prisma.sql` OR `);
+          const whereIn = Prisma.join(orClausesIn, ' OR ');
           const rowsIn = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null }>>(
             Prisma.sql`
               SELECT p."name", p."price", p."description", p."instruction"
@@ -189,7 +189,7 @@ export class AiService {
           Prisma.sql`(p."name" % ${k} OR p."description" % ${k} OR p."instruction" % ${k})`,
         );
         if (orClausesAny.length) {
-          const whereAny = Prisma.join(orClausesAny, Prisma.sql` OR `);
+          const whereAny = Prisma.join(orClausesAny, ' OR ');
           const rowsAny = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null; inStock: boolean }>>(
             Prisma.sql`
               SELECT p."name", p."price", p."description", p."instruction", p."inStock"
