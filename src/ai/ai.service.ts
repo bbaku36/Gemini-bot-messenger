@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly chatModel: ChatGoogleGenerativeAI;
+  private trgmAvailable?: boolean;
 
   constructor(private configService: ConfigService) {
     this.chatModel = new ChatGoogleGenerativeAI({
@@ -166,40 +167,66 @@ export class AiService {
       let matched = allAvailable;
       let matchedAny: typeof matched | null = null;
       if (keywords.length) {
-        // 1) Try fuzzy (trigram) search on in-stock items
-        const orClausesIn = keywords.map((k) =>
-          Prisma.sql`(p."name" % ${k} OR p."description" % ${k} OR p."instruction" % ${k})`,
-        );
-        if (orClausesIn.length) {
-          const whereIn = Prisma.join(orClausesIn, ' OR ');
-          const rowsIn = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null }>>(
-            Prisma.sql`
-              SELECT p."name", p."price", p."description", p."instruction"
-              FROM "public"."Product" p
-              WHERE p."inStock" = true AND (${whereIn})
-              ORDER BY p."createdAt" ASC
-              LIMIT ${10}
-            `,
+        const useTrgm = await this.hasPgTrgm();
+        if (useTrgm) {
+          // 1) Fuzzy via similarity() (pg_trgm)
+          const orClausesIn = keywords.map((k) =>
+            Prisma.sql`(similarity(p."name", ${k}) > 0.2 OR similarity(p."description", ${k}) > 0.2 OR similarity(p."instruction", ${k}) > 0.2)`,
           );
-          if (rowsIn.length) matched = rowsIn as any;
-        }
+          if (orClausesIn.length) {
+            const whereIn = Prisma.join(orClausesIn, ' OR ');
+            const rowsIn = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null }>>(
+              Prisma.sql`
+                SELECT p."name", p."price", p."description", p."instruction"
+                FROM "public"."Product" p
+                WHERE p."inStock" = true AND (${whereIn})
+                ORDER BY p."createdAt" ASC
+                LIMIT ${10}
+              `,
+            );
+            if (rowsIn.length) matched = rowsIn as any;
+          }
 
-        // 2) Check any-stock fuzzy matches (to inform "бэлэнгүй" кейс)
-        const orClausesAny = keywords.map((k) =>
-          Prisma.sql`(p."name" % ${k} OR p."description" % ${k} OR p."instruction" % ${k})`,
-        );
-        if (orClausesAny.length) {
-          const whereAny = Prisma.join(orClausesAny, ' OR ');
-          const rowsAny = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null; inStock: boolean }>>(
-            Prisma.sql`
-              SELECT p."name", p."price", p."description", p."instruction", p."inStock"
-              FROM "public"."Product" p
-              WHERE (${whereAny})
-              ORDER BY p."createdAt" ASC
-              LIMIT ${10}
-            `,
+          const orClausesAny = keywords.map((k) =>
+            Prisma.sql`(similarity(p."name", ${k}) > 0.2 OR similarity(p."description", ${k}) > 0.2 OR similarity(p."instruction", ${k}) > 0.2)`,
           );
-          matchedAny = rowsAny as any;
+          if (orClausesAny.length) {
+            const whereAny = Prisma.join(orClausesAny, ' OR ');
+            const rowsAny = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null; inStock: boolean }>>(
+              Prisma.sql`
+                SELECT p."name", p."price", p."description", p."instruction", p."inStock"
+                FROM "public"."Product" p
+                WHERE (${whereAny})
+                ORDER BY p."createdAt" ASC
+                LIMIT ${10}
+              `,
+            );
+            matchedAny = rowsAny as any;
+          }
+        } else {
+          // Fallback: ILIKE contains search
+          const inWhere = {
+            inStock: true,
+            OR: keywords.map((k) => ({
+              OR: [
+                { name: { contains: k, mode: 'insensitive' } },
+                { description: { contains: k, mode: 'insensitive' } },
+                { instruction: { contains: k, mode: 'insensitive' } },
+              ],
+            })),
+          } as const;
+          matched = await prisma.product.findMany({ where: inWhere, orderBy: { createdAt: 'asc' } });
+
+          const anyWhere = {
+            OR: keywords.map((k) => ({
+              OR: [
+                { name: { contains: k, mode: 'insensitive' } },
+                { description: { contains: k, mode: 'insensitive' } },
+                { instruction: { contains: k, mode: 'insensitive' } },
+              ],
+            })),
+          } as const;
+          matchedAny = await prisma.product.findMany({ where: anyWhere, orderBy: { createdAt: 'asc' } });
         }
       }
 
@@ -207,6 +234,18 @@ export class AiService {
       const allList = this.formatProductsList(allAvailable);
 
       const scope = `Зөвхөн дараах каталогийн талаар ярь. Хэрэв хэрэглэгчийн хүссэн бараа тохирохгүй бол \"одоогоор байхгүй\" гэж хэлээд каталогоос ойролцоо/хамааралтайг санал болго. Хэрэглэх заавар асуувал тухайн барааны 'Заавар' талбараас ишлэн товч тайлбарла. Төлбөр/дэлгүүрийн мэдээлэл асуувал: Tutuyu online дэлгүүр; Данс: 5031746069 Бат‑Итгэл (Хаанбанк); IBAN: MN660005005031746069; Төлбөр — УБ дотор бараагаа хүлээн авсны дараа, орон нутаг руу болохоор урьдчилан төлнө. Каталог:
+  private async hasPgTrgm(): Promise<boolean> {
+    if (this.trgmAvailable !== undefined) return this.trgmAvailable;
+    try {
+      const rows = await prisma.$queryRaw<Array<{ extname: string }>>(
+        Prisma.sql`SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'`
+      );
+      this.trgmAvailable = rows.length > 0;
+    } catch {
+      this.trgmAvailable = false;
+    }
+    return this.trgmAvailable;
+  }
 ---
 ${allList}
 ---`;
