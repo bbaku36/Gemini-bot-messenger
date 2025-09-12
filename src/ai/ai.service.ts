@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
 import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -90,7 +90,7 @@ export class AiService {
     return this.trgmAvailable;
   }
 
-  async generateResponse(userMessage: string): Promise<string> {
+  async generateResponse(userId: string, userMessage: string): Promise<string> {
     try {
       const allAvailable = await prisma.product.findMany({ where: { inStock: true }, orderBy: { createdAt: 'asc' } });
       if (!allAvailable.length) {
@@ -163,18 +163,42 @@ export class AiService {
 
       const matchedList = this.formatProductsList(matched);
       const allList = this.formatProductsList(allAvailable);
-      const scope = `Та Tutuyu online дэлгүүрийн туслах. Богино, ойлгомжтой, эелдэг хариул. Бүтээгдэхүүний талаарх хамгийн хамаатай мэдээллийг л өг; тохирохгүй бол байхгүйг хэлээд ойролцоо/санал болго.`;
+      const scope = `Та Tutuyu online дэлгүүрийн туслах. Богино, ойлгомжтой, эелдэг хариул. Бүтээгдэхүүний талаарх хамгийн хамаатай мэдээллийг л өг; тохирохгүй бол байхгүйг хэл; тухайн хүн захиалга үүсгэх бол заавал утасны дугаар болон гэрийн хаягийн мэдээллийг ав аль нэг нь дутуу бол лавлаж асууж байгаад ав. мөн захиалгын мэдээлэл бүрэг ирсэн бол дансны дугаараа явуул;Tutuyu online дэлгүүр
+,хот дотор захиалга хйиж байгаа тохиолдолд бараагаа хүлээж авсны дараа доорх дансаар төлбөрөө хийнэ үү хүргэлт үнэгүй хөдөө орон нутаг руу унаанд тавьж явуулдаг тул хаягын дэлгэрэнгүй мэдээлэл хэрэггүй бас зүгээр данс явуулаад л болоо ,
+Данс:5031746069 Бат-Итгэл (Хаанбанк)
+IBAN: MN660005005031746069
+Гүйлгээний утга:утасны дугаар`;
 
-      const guidance = `Хариултаа товч, ойлгомжтой, найрсаг өг.`;
+      const guidance = `Хариултаа товч, ойлгомжтой, найрсаг өг. Tutuyu online дэлгүүр
+,хот дотор захиалга хйиж байгаа тохиолдолд бараагаа хүлээж авсны дараа доорх дансаар төлбөрөө хийнэ үү хөдөө орон нутаг руу унаанд тавьж явуулдаг тул хаягын дэлгэрэнгүй мэдээлэл хэрэггүй бас зүгээр данс явуулаад л болоо ,
+Данс:5031746069 Бат-Итгэл (Хаанбанк)
+IBAN: MN660005005031746069
+Гүйлгээний утга:утасны дугаар
+` ;
 
       // Хатуу буцаалт хийхгүй; AI өөрөө найрсаг, товч хариулт бүрдүүлнэ
 
-      const response = await this.chatModel.invoke([
+      // Load last few messages for lightweight memory
+      const history = await prisma.message.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'asc' },
+        take: 12,
+      });
+
+      const chat: (SystemMessage | HumanMessage | AIMessage)[] = [
         new SystemMessage(`${scope}\n\n${guidance}`),
+      ];
+      for (const m of history) {
+        if ((m as any).role === 'bot') chat.push(new AIMessage(m.text));
+        else chat.push(new HumanMessage(m.text));
+      }
+      chat.push(
         new HumanMessage(
           `Асуулт: ${userMessage}\n\nТаарч буй бараа (бэлэн):\n${matchedList}\n\nБусад бэлэн бараа (санал болгоход):\n${allList}`,
         ),
-      ]);
+      );
+
+      const response = await this.chatModel.invoke(chat);
 
       return response.content.toString();
     } catch (error: any) {

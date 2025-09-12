@@ -36,8 +36,8 @@ export class MessengerService {
         this.logger.log(`New user created: ${senderId}`);
       }
 
-      // Store incoming message
-      await prisma.message.create({ data: { userId: user.id, text: message } });
+      // Store incoming message as 'user'
+      await prisma.message.create({ data: { userId: user.id, text: message, role: 'user' } });
 
       // Extract phone/address hints from message
       const phone = this.extractPhone(message);
@@ -80,11 +80,14 @@ export class MessengerService {
         }
       }
 
-      // Ask AI for a response (free but product-focused)
-      const aiResponse = await this.aiService.generateResponse(message);
+      // Ask AI for a response with conversation history
+      const aiResponse = await this.aiService.generateResponse(user.id, message);
 
       // Send back to Messenger
       await this.sendMessage(senderId, aiResponse);
+
+      // Store AI response as 'bot'
+      await prisma.message.create({ data: { userId: user.id, text: aiResponse, role: 'bot' } });
     } catch (error: any) {
       this.logger.error(`Error handling message: ${error.message}`);
       throw error;
