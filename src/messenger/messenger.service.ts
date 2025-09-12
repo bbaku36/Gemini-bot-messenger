@@ -59,7 +59,10 @@ export class MessengerService {
             where: { id: order.id },
             data: { ...updates, ...(nowReady ? { status: 'ready' } : {}) },
           });
-          if (nowReady) await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
+          if (nowReady) {
+            await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
+            await this.sendPaymentInstructions(senderId, order.address || updates.address || undefined, order.contactPhone || updates.contactPhone || undefined);
+          }
         }
       } else {
         order = await prisma.order.create({
@@ -71,7 +74,10 @@ export class MessengerService {
             address: address || null,
           },
         });
-        if (order.status === 'ready') await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
+        if (order.status === 'ready') {
+          await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
+          await this.sendPaymentInstructions(senderId, order.address || undefined, order.contactPhone || undefined);
+        }
       }
 
       // Ask AI for a response (free but product-focused)
@@ -104,6 +110,39 @@ export class MessengerService {
       this.logger.error(`Error sending message: ${error.message} ${details ? `- ${JSON.stringify(details)}` : ''}`);
       throw error;
     }
+  }
+
+  // ===== Payment instructions helpers =====
+  private isCountryside(address?: string | null): boolean {
+    if (!address) return false;
+    const a = address.toLowerCase();
+    if (/(орон нутаг|аймаг|сум|гээд|тоо|шуудан|карго)/.test(a)) return true;
+    if (/(ulaanbaatar|улаанбаатар|уб)/.test(a)) return false;
+    return false;
+  }
+
+  private buildPaymentMessage(address?: string, phone?: string): string {
+    const shop = 'Tutuyu online дэлгүүр';
+    const bank = 'Данс: 5031746069 Бат‑Итгэл (Хаанбанк)';
+    const iban = 'IBAN: MN660005005031746069';
+    const note = `Гүйлгээний утга: ${phone ? phone : 'утасны дугаар'}`;
+    const isCountry = this.isCountryside(address);
+    const policyCity = 'Улаанбаатар хот дотор: бараагаа хүлээн авсны дараа дээрх данс руу төлнө үү.';
+    const policyCountry = 'Орон нутгийн хүргэлт: урьдчилан төлбөрөө дээрх данс руу шилжүүлнэ үү. Төлбөр баталгаажмагц илгээнэ.';
+    const policy = isCountry ? policyCountry : policyCity;
+    return [
+      'Захиалга баталгаажлаа. Төлбөрийн мэдээлэл:',
+      shop,
+      bank,
+      iban,
+      note,
+      policy,
+    ].join('\n');
+  }
+
+  private async sendPaymentInstructions(recipientId: string, address?: string, phone?: string): Promise<void> {
+    const text = this.buildPaymentMessage(address, phone);
+    await this.sendMessage(recipientId, text);
   }
 
   // Extract Mongolian phone numbers; tolerates +976 and separators
