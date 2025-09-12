@@ -42,42 +42,43 @@ export class MessengerService {
       // Extract phone/address hints from message
       const phone = this.extractPhone(message);
       const address = this.extractAddress(message);
+      // Update user's default contact info if newly provided
+      const userUpdates: any = {};
+      if (phone && !user.contactPhone) userUpdates.contactPhone = phone;
+      if (address && !user.address) userUpdates.address = address;
+      if (Object.keys(userUpdates).length) {
+        user = await prisma.user.update({ where: { id: user.id }, data: userUpdates });
+      }
 
-      // Find latest pending order or create new
-      let order = await prisma.order.findFirst({
-        where: { userId: user.id, status: 'pending' },
-        orderBy: { createdAt: 'desc' },
-      });
+      // Find latest pending order or create new if last is ready
+      let order = await prisma.order.findFirst({ where: { userId: user.id, status: 'pending' }, orderBy: { createdAt: 'desc' } });
+      if (!order) {
+        const prefill: any = { userId: user.id, message, status: 'pending', contactPhone: phone || user.contactPhone || null, address: address || user.address || null };
+        order = await prisma.order.create({ data: prefill });
+      }
 
-      if (order) {
-        const updates: any = {};
-        if (phone && !order.contactPhone) updates.contactPhone = phone;
-        if (address && !order.address) updates.address = address;
-        if (Object.keys(updates).length) {
-          const nowReady = (updates.contactPhone || order.contactPhone) && (updates.address || order.address);
-          order = await prisma.order.update({
-            where: { id: order.id },
-            data: { ...updates, ...(nowReady ? { status: 'ready' } : {}) },
-          });
-          if (nowReady) {
-            await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
-            await this.sendPaymentInstructions(senderId, order.address || updates.address || undefined, order.contactPhone || updates.contactPhone || undefined);
-          }
-        }
-      } else {
-        order = await prisma.order.create({
-          data: {
-            userId: user.id,
-            message,
-            status: phone && address ? 'ready' : 'pending',
-            contactPhone: phone || null,
-            address: address || null,
-          },
-        });
-        if (order.status === 'ready') {
-          await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
-          await this.sendPaymentInstructions(senderId, order.address || undefined, order.contactPhone || undefined);
-        }
+      // Attach product items if message mentions any
+      const addedItems = await this.addMentionedItems(order.id, message);
+      if (addedItems > 0) this.logger.log(`Added ${addedItems} item(s) to order ${order.id}`);
+
+      // Update contact info on order if provided now or from user defaults
+      const updates: any = {};
+      if (phone && !order.contactPhone) updates.contactPhone = phone;
+      if (address && !order.address) updates.address = address;
+      if (!updates.contactPhone && user.contactPhone && !order.contactPhone) updates.contactPhone = user.contactPhone;
+      if (!updates.address && user.address && !order.address) updates.address = user.address;
+
+      if (Object.keys(updates).length) {
+        order = await prisma.order.update({ where: { id: order.id }, data: updates });
+      }
+
+      // Decide readiness: needs both contact and at least one item
+      const itemCount = await prisma.orderItem.count({ where: { orderId: order.id } });
+      const hasContacts = !!(order.contactPhone && order.address);
+      if (hasContacts && itemCount > 0 && order.status !== 'ready') {
+        order = await prisma.order.update({ where: { id: order.id }, data: { status: 'ready' } });
+        await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
+        await this.sendPaymentInstructions(senderId, order.address || undefined, order.contactPhone || undefined);
       }
 
       // Ask AI for a response with conversation history
@@ -92,6 +93,41 @@ export class MessengerService {
       this.logger.error(`Error handling message: ${error.message}`);
       throw error;
     }
+  }
+
+  // Add products mentioned in the text to the order (simple name contains match)
+  private async addMentionedItems(orderId: string, text: string): Promise<number> {
+    const q = (text || '').toLowerCase();
+    if (!q) return 0;
+    const candidates = await prisma.product.findMany({ where: { inStock: true }, orderBy: { createdAt: 'asc' } });
+    let added = 0;
+    for (const p of candidates) {
+      const name = (p.name || '').toLowerCase();
+      if (!name) continue;
+      if (q.includes(name)) {
+        await prisma.orderItem.create({
+          data: {
+            orderId,
+            productId: p.id,
+            productName: p.name,
+            unitPrice: p.price,
+            quantity: this.extractQuantityNearName(q, name) ?? 1,
+          },
+        });
+        added++;
+      }
+    }
+    return added;
+  }
+
+  private extractQuantityNearName(text: string, name: string): number | null {
+    // Look for patterns like "name x2", "2 ширхэг name", "name 2sh"
+    const idx = text.indexOf(name);
+    if (idx < 0) return null;
+    const window = text.slice(Math.max(0, idx - 12), idx + name.length + 12);
+    const m = window.match(/(?:x|×|ш|ширхэг)?\s*(\d{1,2})\s*(?:ш|ширхэг)?/i);
+    const n = m ? parseInt(m[1], 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
   }
 
   private async sendMessage(recipientId: string, message: string): Promise<void> {
