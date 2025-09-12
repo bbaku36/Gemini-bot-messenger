@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { AiService } from '../ai/ai.service';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -73,7 +73,7 @@ export class MessengerService {
       }
 
       // Decide readiness: needs both contact and at least one item
-      const itemCount = await prisma.orderItem.count({ where: { orderId: order.id } });
+      const itemCount = await this.countOrderItems(order.id);
       const hasContacts = !!(order.contactPhone && order.address);
       if (hasContacts && itemCount > 0 && order.status !== 'ready') {
         order = await prisma.order.update({ where: { id: order.id }, data: { status: 'ready' } });
@@ -128,6 +128,22 @@ export class MessengerService {
     const m = window.match(/(?:x|×|ш|ширхэг)?\s*(\d{1,2})\s*(?:ш|ширхэг)?/i);
     const n = m ? parseInt(m[1], 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  private async countOrderItems(orderId: string): Promise<number> {
+    try {
+      const anyClient: any = prisma as any;
+      if (anyClient.orderItem?.count) {
+        return await anyClient.orderItem.count({ where: { orderId } });
+      }
+      const rows = await prisma.$queryRaw<Array<{ c: number }>>(
+        Prisma.sql`SELECT COUNT(*)::int AS c FROM "public"."OrderItem" WHERE "orderId" = ${orderId}`,
+      );
+      return rows?.[0]?.c ?? 0;
+    } catch (e) {
+      this.logger.warn(`OrderItem count fallback failed: ${(e as any)?.message || e}`);
+      return 0;
+    }
   }
 
   private async sendMessage(recipientId: string, message: string): Promise<void> {
