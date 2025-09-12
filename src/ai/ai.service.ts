@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -166,32 +166,41 @@ export class AiService {
       let matched = allAvailable;
       let matchedAny: typeof matched | null = null;
       if (keywords.length) {
-        matched = await prisma.product.findMany({
-          where: {
-            inStock: true,
-            OR: keywords.map((k) => ({
-              OR: [
-                { name: { contains: k, mode: 'insensitive' } },
-                { description: { contains: k, mode: 'insensitive' } },
-                { instruction: { contains: k, mode: 'insensitive' } },
-              ],
-            })),
-          },
-          orderBy: { createdAt: 'asc' },
-        });
-        // Also check if there are matches but currently out of stock
-        matchedAny = await prisma.product.findMany({
-          where: {
-            OR: keywords.map((k) => ({
-              OR: [
-                { name: { contains: k, mode: 'insensitive' } },
-                { description: { contains: k, mode: 'insensitive' } },
-                { instruction: { contains: k, mode: 'insensitive' } },
-              ],
-            })),
-          },
-          orderBy: { createdAt: 'asc' },
-        });
+        // 1) Try fuzzy (trigram) search on in-stock items
+        const orClausesIn = keywords.map((k) =>
+          Prisma.sql`(p."name" % ${k} OR p."description" % ${k} OR p."instruction" % ${k})`,
+        );
+        if (orClausesIn.length) {
+          const whereIn = Prisma.join(orClausesIn, Prisma.sql` OR `);
+          const rowsIn = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null }>>(
+            Prisma.sql`
+              SELECT p."name", p."price", p."description", p."instruction"
+              FROM "public"."Product" p
+              WHERE p."inStock" = true AND (${whereIn})
+              ORDER BY p."createdAt" ASC
+              LIMIT ${10}
+            `,
+          );
+          if (rowsIn.length) matched = rowsIn as any;
+        }
+
+        // 2) Check any-stock fuzzy matches (to inform "бэлэнгүй" кейс)
+        const orClausesAny = keywords.map((k) =>
+          Prisma.sql`(p."name" % ${k} OR p."description" % ${k} OR p."instruction" % ${k})`,
+        );
+        if (orClausesAny.length) {
+          const whereAny = Prisma.join(orClausesAny, Prisma.sql` OR `);
+          const rowsAny = await prisma.$queryRaw<Array<{ name: string; price: number; description: string | null; instruction: string | null; inStock: boolean }>>(
+            Prisma.sql`
+              SELECT p."name", p."price", p."description", p."instruction", p."inStock"
+              FROM "public"."Product" p
+              WHERE (${whereAny})
+              ORDER BY p."createdAt" ASC
+              LIMIT ${10}
+            `,
+          );
+          matchedAny = rowsAny as any;
+        }
       }
 
       const matchedList = this.formatProductsList(matched);
