@@ -72,11 +72,13 @@ export class MessengerService {
         order = await prisma.order.update({ where: { id: order.id }, data: updates });
       }
 
-      // Decide readiness: needs both contact and at least one item
+      // Decide readiness: both contact fields present (items optional)
       const itemCount = await this.countOrderItems(order.id);
       const hasContacts = !!(order.contactPhone && order.address);
-      if (hasContacts && itemCount > 0 && order.status !== 'ready') {
+      if (hasContacts && order.status !== 'ready') {
+        const prevStatus = order.status;
         order = await prisma.order.update({ where: { id: order.id }, data: { status: 'ready' } });
+        this.logger.log(`Order ${order.id} status changed ${prevStatus} -> ready (items=${itemCount})`);
         await this.tagUserWithLabels(senderId, ['ordered', 'follow_up']);
         await this.sendPaymentInstructions(senderId, order.address || undefined, order.contactPhone || undefined);
       }
@@ -233,6 +235,7 @@ export class MessengerService {
       return null;
     }
     try {
+      this.logger.log(`Ensuring label '${name}' on Page ${this.pageId}`);
       if (name === 'ordered' && this.orderedLabelId) return this.orderedLabelId;
       if (name === 'follow_up' && this.followUpLabelId) return this.followUpLabelId;
 
